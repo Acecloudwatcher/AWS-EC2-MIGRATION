@@ -1,0 +1,314 @@
+AWS EC2 Migration Simulation: AMI Creation & Storage Lifecycle Demonstration
+📋 Project Overview
+
+This project simulates a real-world cloud migration by creating a reusable Amazon Machine Image (AMI) from a customized EC2 instance and launching a new instance from that image. It demonstrates infrastructure consistency, migration efficiency, and cost optimization through automated storage lifecycle policies.
+
+Core Skills Demonstrated:
+
+    EC2 instance configuration and customization
+
+    AMI creation for infrastructure replication
+
+    Storage lifecycle management with Data Lifecycle Manager (DLM)
+
+    Cost optimization through tiered storage strategies
+
+    Infrastructure as Code principles
+
+🏗️ Architecture
+text
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    SOURCE ENVIRONMENT                           │
+│  ┌─────────────────────────┐                                    │
+│  │  Source-Migration-Server │                                    │
+│  │  ├── Apache Web Server  │                                    │
+│  │  ├── PHP Application    │                                    │
+│  │  └── Sample Data Volume │                                    │
+│  └───────────┬─────────────┘                                    │
+│              │                                                    │
+│              ▼                                                    │
+│  ┌─────────────────────────┐    ┌─────────────────────────────┐ │
+│  │   Create Custom AMI     │───▶│  Migration-Demo-AMI-v1      │ │
+│  └─────────────────────────┘    └───────────────┬─────────────┘ │
+└───────────────────────────────────────────────────│───────────────┘
+                                                     │
+                          ┌──────────────────────────┼──────────────────────────┐
+                          │                          │                          │
+                          ▼                          ▼                          ▼
+              ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+              │ Migrated-Server-Prod │    │  DLM Lifecycle      │    │  S3 Lifecycle       │
+              │ (Launched from AMI)  │    │  Policy: 90-day     │    │  Rules: Tier to     │
+              │                      │    │  Snapshot Retention │    │  IA & Glacier       │
+              └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+
+🔧 Prerequisites
+Requirement	Description
+AWS Account	Administrative access with permissions to create EC2, AMIs, and DLM policies
+Key Pair	migration-demo-key.pem for SSH access
+SSH Client	Terminal (Mac/Linux) or PuTTY (Windows)
+IAM Permissions	Ability to create roles and policies for DLM
+Budget Awareness	Resources incur costs; clean up after completion
+📝 Step-by-Step Implementation
+Part 1: Launch and Configure Source Instance
+
+Step 1.1: Launch Base EC2 Instance
+bash
+
+# Navigate to AWS Console → EC2 → Instances → Launch instance
+
+Field	Value
+Instance Name	Source-Migration-Server
+AMI	Amazon Linux 2023
+Instance Type	t2.micro (Free tier eligible)
+Key Pair	migration-demo-key
+Network	Default VPC with auto-assign public IP
+Security Group	Migration-Demo-SG (SSH:22, HTTP:80 from 0.0.0.0/0)
+Root Volume	20 GB gp3
+Additional Volume	10 GB gp3 (for sample data)
+
+Step 1.2: Connect via SSH
+bash
+
+# In your local terminal:
+cd ~/Downloads  # or wherever your key is stored
+chmod 400 migration-demo-key.pem
+ssh -i "migration-demo-key.pem" ec2-user@[your-instance-public-ip]
+
+Step 1.3: Install and Configure Web Server
+bash
+
+# Update system packages
+sudo dnf update -y
+
+# Install Apache web server
+sudo dnf install -y httpd
+
+# Start Apache
+sudo systemctl start httpd
+
+# Enable Apache to start on boot
+sudo systemctl enable httpd
+
+# Verify Apache is running
+sudo systemctl status httpd
+
+Expected output: Active: active (running)
+
+Step 1.4: Create Sample Application
+bash
+
+# Install PHP
+sudo dnf install -y php
+
+# Create PHP test page
+echo "<?php phpinfo(); ?>" | sudo tee /var/www/html/phpinfo.php
+
+# Restart Apache to load PHP
+sudo systemctl restart httpd
+
+# Create sample data on additional volume
+sudo mkfs -t ext4 /dev/xvdb
+sudo mkdir /data
+sudo mount /dev/xvdb /data
+echo "Sample migration data - $(date)" | sudo tee /data/sample.txt
+
+Step 1.5: Verify Installation
+bash
+
+# Test locally
+curl http://localhost
+curl http://localhost/phpinfo.php
+
+# Note your public IP for browser testing
+curl http://checkip.amazonaws.com
+
+Then open a browser and visit:
+
+    http://[your-public-ip] (Apache test page)
+
+    http://[your-public-ip]/phpinfo.php (PHP info page)
+
+Part 2: Create Custom AMI (Migration Artifact)
+
+Step 2.1: Create Image from Instance
+bash
+
+# AWS Console → EC2 → Instances → Select Source-Migration-Server
+# Actions → Image and templates → Create image
+
+Field	Value
+Image name	Migration-Demo-AMI-v1
+Image description	Custom AMI with Apache/PHP for migration demo
+Reboot instance	❌ No reboot (for faster creation)
+Volume settings	Keep defaults (both volumes will be snapshotted)
+
+Tags for Governance:
+Key	Value
+MigrationPhase	Source-Image
+CostCenter	Migration-Demo
+Environment	Pre-Migration
+CreatedBy	[Your-Name]
+
+Step 2.2: Monitor AMI Creation
+bash
+
+# AWS Console → EC2 → AMIs → Owned by me
+# Status will change from pending → available (5-10 minutes)
+
+Step 2.3: Verify Snapshots Created
+bash
+
+# AWS Console → EC2 → Snapshots → Owned by me
+# Look for snapshots with description referencing your AMI ID
+
+Part 3: Launch Migrated Instance from AMI
+
+Step 3.1: Launch New Instance from Custom AMI
+bash
+
+# AWS Console → EC2 → AMIs → Select Migration-Demo-AMI-v1
+# Click "Launch instance from AMI"
+
+Field	Value
+Instance Name	Migrated-Server-Production
+Instance Type	t2.micro
+Key Pair	migration-demo-key (same as source)
+Network	Default VPC with auto-assign public IP
+Security Group	Migration-Demo-SG (or create new with SSH/HTTP)
+Storage	Keep default (20 GB root, 10 GB data - from snapshots)
+
+Step 3.2: Verify Migration Success
+bash
+
+# Connect to new instance via SSH
+ssh -i "migration-demo-key.pem" ec2-user@[new-instance-public-ip]
+
+# Check web server status
+sudo systemctl status httpd
+
+# Mount and verify data volume
+sudo mkdir /data
+sudo mount /dev/xvdb /data
+cat /data/sample.txt
+
+# Verify application
+curl http://localhost/phpinfo.php
+
+Expected result: All configurations, applications, and data from source instance are preserved.
+Part 4: Implement Storage Lifecycle Strategies (Cost Control)
+
+Step 4.1: Create Data Lifecycle Manager (DLM) Policy
+bash
+
+# AWS Console → EC2 → Lifecycle Manager (under Elastic Block Store)
+# Click "Create lifecycle policy"
+
+Field	Value
+Policy type	EBS snapshot policy
+Description	Migration-Demo-Snapshot-Retention
+Target resource	Snapshot
+Target tags	MigrationPhase=Source-Image
+Schedule name	Migration-Backup-Retention
+Retention type	Age-based
+Retain snapshots for	90 days
+Cross-region copy	Disable
+Tags	CostCenter=Migration-Demo
+
+What this accomplishes: Automatically deletes snapshots after 90 days, preventing orphaned resources from incurring ongoing costs.
+
+Step 4.2: Create S3 Lifecycle Rules (if applicable)
+bash
+
+# AWS Console → S3 → Select your bucket → Management tab
+# Click "Create lifecycle rule"
+
+Field	Value
+Rule name	Data-Tiering-Strategy
+Scope	Apply to all objects
+Transitions:	
+30 days	Move to Standard-IA
+90 days	Move to Glacier Instant Retrieval
+Expiration:	
+365 days	Permanently delete
+
+What this accomplishes: Automatically moves data to cheaper storage as it ages, optimizing long-term storage costs.
+
+Step 4.3: Create CloudWatch Alerts for Cost Monitoring (Optional)
+bash
+
+# AWS Console → CloudWatch → Billing → Create alarm
+
+Set alerts for when monthly charges exceed a threshold.
+Part 5: Clean Up and Optimization
+
+Step 5.1: Deregister Source AMI After Migration
+bash
+
+# AWS Console → EC2 → AMIs → Owned by me
+# Select Migration-Demo-AMI-v1
+# Actions → Deregister AMI → Confirm
+
+Why: Deregistering prevents charges for stored AMI while snapshots remain for relaunch if needed.
+
+Step 5.2: Verify DLM Policy is Active
+bash
+
+# AWS Console → EC2 → Lifecycle Manager
+# Confirm policy shows "Active" status
+# Check "Policy summary" for target resources
+
+Step 5.3: Test Snapshot Retention (Simulated)
+bash
+
+# AWS Console → EC2 → Snapshots → Owned by me
+# Note creation dates of migration-related snapshots
+# DLM will automatically delete after 90 days
+
+Step 5.4: Final Cleanup (When Demo Complete)
+bash
+
+# Terminate both instances
+# AWS Console → EC2 → Instances → Select both → Instance state → Terminate
+
+# Delete manual snapshots if any remain
+# AWS Console → EC2 → Snapshots → Select → Actions → Delete
+
+# Delete DLM policy if no longer needed
+# AWS Console → EC2 → Lifecycle Manager → Select → Delete
+
+✅ Verification Checklist
+Verification Step	Command/Action	Expected Result
+Source instance configured	curl http://localhost/phpinfo.php	PHP info page displays
+AMI created	Console → AMIs → Owned by me	Status = available
+New instance launched	Console → Instances	Instance running, health checks passed
+Data persisted	cat /data/sample.txt	Sample text appears with timestamp
+Application migrated	Browser → http://[new-ip]/phpinfo.php	PHP info page displays
+DLM policy active	Console → Lifecycle Manager	Policy status = Enabled
+Cost controls active	Console → S3 → Bucket → Management	Lifecycle rules listed
+💰 Cost Optimization Summary
+Strategy	Implementation	Cost Impact
+AMI Deregistration	Remove unused AMIs after migration	Eliminates storage costs for inactive images
+Snapshot Lifecycle	Auto-delete snapshots after 90 days	Prevents orphaned snapshot accumulation
+Storage Tiering	Transition S3 data to IA/Glacier	Reduces storage costs by 50-80% for aged data
+Right-sizing	Use t2.micro for demo workloads	Minimizes compute costs during testing
+Auto-cleanup	DLM policies for automatic deletion	Eliminates human forgetfulness costs
+📊 Key Takeaways
+Concept	Demonstration
+Migration Efficiency	AMI captures entire server state, enabling consistent, repeatable deployments without manual reconfiguration
+Infrastructure Consistency	New instance launched from AMI is identical to source, eliminating configuration drift
+Cost Control	DLM policies automatically expire snapshots, preventing orphaned resources from accumulating charges
+Storage Optimization	Lifecycle rules tier data to appropriate storage classes based on age
+Governance	Tags enable cost tracking, resource identification, and automated policy targeting
+🛠️ Troubleshooting Guide
+Issue	Likely Cause	Solution
+systemctl commands fail	Connected via browser-based console instead of SSH	Use SSH with key pair as shown in Step 1.2
+Unit httpd.service not found	Apache not installed	Run sudo dnf install -y httpd
+Can't connect via browser	Security group missing HTTP rule	Add inbound rule: HTTP, port 80, source 0.0.0.0/0
+AMI creation stuck	Instance in unstable state	Reboot source instance and retry
+DLM policy not triggering	Missing tags on target resources	Verify snapshots have correct tags (MigrationPhase=Source-Image)
+Data volume not mounting	Device name different	Run lsblk to identify correct device name
+📝 Resume Summary
+
+    "Designed and executed an end-to-end cloud migration simulation using AWS EC2 and AMIs, demonstrating infrastructure consistency and migration efficiency. Implemented automated storage lifecycle policies using Amazon Data Lifecycle Manager to optimize long-term costs through snapshot expiration and tiered storage transitions. Validated successful migration through comprehensive testing of application persistence and data integrity."
+
